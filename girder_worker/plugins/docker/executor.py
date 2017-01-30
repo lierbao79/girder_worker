@@ -15,16 +15,12 @@ def _pull_image(image):
     """
     Pulls the specified Docker image onto this worker.
     """
-    command = ('docker', 'pull', image)
-    p = subprocess.Popen(args=command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = p.communicate()
-
-    if p.returncode != 0:
+    client = docker.from_env()
+    try:
+        client.images.pull(image)
+    except docker.errors.APIError:
         print('Error pulling Docker image %s:' % image)
-        print('STDOUT: ' + stdout)
-        print('STDERR: ' + stderr)
-
-        raise Exception('Docker pull returned code {}.'.format(p.returncode))
+        raise
 
 
 def _read_from_config(key, default):
