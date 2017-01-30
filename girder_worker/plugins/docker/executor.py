@@ -1,6 +1,8 @@
 import os
 import re
 import subprocess
+import sys
+import docker
 
 from girder_worker import config
 from girder_worker.core import TaskSpecValidationError, utils
@@ -224,23 +226,68 @@ def run(task, inputs, outputs, task_inputs, task_outputs, **kwargs):
 
     if 'entrypoint' in task:
         if isinstance(task['entrypoint'], (list, tuple)):
-            ep_args = ['--entrypoint'] + task['entrypoint']
+            ep_args = task['entrypoint']
         else:
-            ep_args = ['--entrypoint', task['entrypoint']]
+            ep_args = [task['entrypoint']]
     else:
         ep_args = []
 
-    command = [
-        'docker', 'run',
-        '-v', '%s:%s' % (tempdir, DATA_VOLUME)
-    ] + task.get('docker_run_args', []) + ep_args + [image] + args
+    # TODO we could allow configuration of non default socket
+    client = docker.from_env()
+    config = {
+        'tty': True,
+        'volumes':{
+            tempdir: {
+                'bind': DATA_VOLUME,
+                'mode': 'rw'
+            }
+        },
+        'detach': True
+    }
 
-    print('Running container: %s' % repr(command))
+    if ep_args:
+        config['entrypoint'] = ep_args
 
-    p = utils.run_process(command, output_pipes=opipes, input_pipes=ipipes)
+    print('Running container: image: %s args: %s config: %s' % (image, args, config))
+    container = client.containers.run(image, args, **config)
 
-    if p.returncode != 0:
-        raise Exception('Error: docker run returned code %d.' % p.returncode)
+    stdout = None
+    stderr = None
+    try:
+        # attach to standard streams
+        stdout = container.attach_socket(params={
+            'stdout': True,
+            'logs': True,
+            'stream': True
+
+        })
+
+        stderr = container.attach_socket(params={
+            'stderr': True,
+            'logs': True,
+            'stream': True
+
+        })
+
+        def exit_condition():
+            return container.status == 'terminated'
+
+        def close_output(output):
+            return output not in (stdout.fileno(), stderr.fileno())
+
+        opipes[stdout.fileno()] = opipes.get(
+            '_stdout', utils.WritePipeAdapter({}, sys.stdout))
+        opipes[stderr.fileno()] = opipes.get(
+            '_stderr', utils.WritePipeAdapter({}, sys.stderr))
+
+        # Run select loop
+        utils.select_loop(exit_condition=exit_condition, close_output=close_output, outputs=opipes, inputs=ipipes)
+    finally:
+        # Close our stdout and stderr sockets
+        if stdout:
+            stdout.close()
+        if stderr:
+            stderr.close()
 
     print('Garbage collecting old containers and images.')
     gc_dir = os.path.join(tempdir, 'docker_gc_scratch')
