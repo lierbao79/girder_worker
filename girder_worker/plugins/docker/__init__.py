@@ -1,4 +1,4 @@
-import subprocess
+import docker
 
 
 def before_run(e):
@@ -16,17 +16,26 @@ def cleanup(e):
     from .executor import DATA_VOLUME
     if e.info['task']['mode'] == 'docker' and '_tempdir' in e.info['kwargs']:
         tmpdir = e.info['kwargs']['_tempdir']
-        cmd = [
-            'docker', 'run', '--rm', '-v', '%s:%s' % (tmpdir, DATA_VOLUME),
-            'busybox', 'chmod', '-R', 'a+rw', DATA_VOLUME
-        ]
-        p = subprocess.Popen(args=cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = p.communicate()
-        if p.returncode:
+
+        client = docker.from_env()
+        config = {
+            'tty': True,
+            'volumes': {
+                tmpdir: {
+                    'bind': DATA_VOLUME,
+                    'mode': 'rw'
+                }
+            },
+            'detach': False,
+            'remove': True
+        }
+        args = ['chmod', '-R', 'a+rw', DATA_VOLUME]
+
+        try:
+            client.containers.run('busybox', args, **config)
+        except:
             print('Error setting perms on docker tempdir %s.' % tmpdir)
-            print('STDOUT: ' + out)
-            print('STDERR: ' + err)
-            raise Exception('Docker tempdir chmod returned code %d.' % p.returncode)
+            raise
 
 
 def load(params):
