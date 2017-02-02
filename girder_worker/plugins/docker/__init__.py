@@ -2,7 +2,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from girder_worker import config
+from girder_worker import config, logger
 
 
 def before_run(e):
@@ -28,7 +28,7 @@ def docker_gc(e):
     the same directory as this file. After that, deletes all images that are
     no longer used by any containers.
     """
-    print('Garbage collecting docker containers and images.')
+    logger.info('Garbage collecting docker containers and images.')
     gc_dir = tempfile.mkdtemp()
 
     try:
@@ -78,9 +78,9 @@ def task_cleanup(e):
         p = subprocess.Popen(args=cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = p.communicate()
         if p.returncode:
-            print('Error setting perms on docker tempdir %s.' % tmpdir)
-            print('STDOUT: ' + out)
-            print('STDERR: ' + err)
+            logger.error(
+                'Error setting perms on docker tempdir %s.\nSTDOUT: %s\nSTDERR:%s',
+                tmpdir, out, err)
             raise Exception('Docker tempdir chmod returned code %d.' % p.returncode)
 
 
